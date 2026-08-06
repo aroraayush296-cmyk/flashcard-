@@ -8,7 +8,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
@@ -68,7 +68,7 @@ def process_pdf(pdf_file):
         splits = text_splitter.split_documents(docs)
 
         # Embed & Index
-        embeddings = OpenAIEmbeddings()
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
         vectorstore = FAISS.from_documents(splits, embeddings)
         return vectorstore
     finally:
@@ -88,7 +88,7 @@ def generate_flashcards(vectorstore, topic, num_cards):
 
     # Setup LLM & Parser
     parser = JsonOutputParser(pydantic_object=FlashcardList)
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3)
 
     prompt_template = """
     You are an expert study assistant. Use the following context retrieved from the user's notes to create {num_cards} high-quality flashcards.
