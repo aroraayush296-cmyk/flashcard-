@@ -1,214 +1,127 @@
-import json
 import os
-import tempfile
-import streamlit as st
+from typing import List
+from pydantic import BaseModel, Field
 
-# LangChain Imports
-from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pydantic import BaseModel, Field
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="PDF Flashcard AI Generator", page_icon="⚡", layout="wide"
-)
-
-st.title("⚡ RAG PDF Flashcard Generator")
-st.write(
-    "Upload your lecture notes/PDFs and extract AI-powered flashcards via"
-    " Retrieval-Augmented Generation."
-)
-
-# --- Sidebar: Setup & API Keys ---
-with st.sidebar:
-    st.header("🔑 Configuration")
-    GOOGLE_API_KEY = st.text_input("ENTER GOOGLE API KEY", type="password")
-    if not GOOGLE_API_KEY:
-        st.info("Please provide a GOOGLE API KEY to proceed.")
-        st.stop()
-
-    os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
-
-
-# --- Pydantic Schema for Structured Output ---
+# ==========================================
+# 1. Define Data Structure for Flashcards
+# ==========================================
 class Flashcard(BaseModel):
-    question: str = Field(
-        description="The front side of the card: clear question or term"
-    )
-    answer: str = Field(
-        description="The back side of the card: concise explanation or definition"
-    )
+    front: str = Field(description="The question, concept, or prompt for the front of the flashcard")
+    back: str = Field(description="The concise, clear answer or explanation for the back")
 
+class FlashcardSet(BaseModel):
+    cards: List[Flashcard] = Field(description="A collection of generated flashcards")
 
-class FlashcardList(BaseModel):
-    cards: list[Flashcard]
+# ==========================================
+# 2. Main RAG Flashcard Generator Class
+# ==========================================
+class GoogleRAGFlashcardGenerator:
+    def __init__(self, api_key: str = None, chunk_size: int = 500, chunk_overlap: int = 50):
+        # Fetch key from param or environment
+        google_api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        if not google_api_key:
+            raise ValueError("Google API key must be provided or set in GOOGLE_API_KEY env variable.")
 
+        # Initialize Google Embeddings & Gemini LLM
+        self.embeddings = GoogleGenerativeAIEmbeddings(
+            model="models/text-embedding-004",
+            google_api_key=google_api_key
+        )
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            temperature=0.3,
+            google_api_key=google_api_key
+        )
+        
+        # Text splitter setup
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        
+        # Output parser for structured JSON output
+        self.parser = JsonOutputParser(pydantic_object=FlashcardSet)
+        
+        # Setup Prompt Template
+        self.prompt = PromptTemplate(
+            template=(
+                "You are an expert tutor creating study materials.\n"
+                "Based ONLY on the provided context, generate high-quality flashcards.\n"
+                "Focus on key concepts, definitions, and relationships.\n\n"
+                "Context:\n{context}\n\n"
+                "{format_instructions}\n"
+            ),
+            input_variables=["context"],
+            partial_variables={"format_instructions": self.parser.get_format_instructions()}
+        )
+        
+        self.vector_store = None
 
-# --- Core RAG Processing Functions ---
-@st.cache_resource(show_spinner=False)
-def process_pdf(pdf_file):
-    """Saves uploaded PDF to temporary file, chunks text, and generates FAISS Vector DB."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        tmp_file.write(pdf_file.read())
-        tmp_path = tmp_file.name
+    def ingest_notes(self, text_notes: str):
+        """Splits raw text notes into chunks, generates Google embeddings, and stores them in FAISS."""
+        # 1. Chunking
+        docs = self.text_splitter.create_documents([text_notes])
+        
+        # 2. Vector Indexing using FAISS with Gemini Embeddings
+        self.vector_store = FAISS.from_documents(docs, self.embeddings)
+        print(f"✅ Successfully indexed {len(docs)} text chunks into FAISS.")
 
-    try:
-        # Load PDF
-        loader = PyPDFLoader(tmp_path)
-        docs = loader.load()
+    def generate_flashcards(self, query: str = "Key concepts, definitions, and main ideas", k: int = 4) -> List[dict]:
+        """Retrieves relevant chunks using FAISS and generates flashcards with Gemini."""
+        if not self.vector_store:
+            raise ValueError("Please ingest notes first using ingest_notes().")
+            
+        # 1. Retrieval (RAG)
+        retriever = self.vector_store.as_retriever(search_kwargs={"k": k})
+        relevant_docs = retriever.invoke(query)
+        
+        # Combine retrieved context
+        context_text = "\n\n".join([doc.page_content for doc in relevant_docs])
+        
+        # 2. Generation using LCEL (LangChain Expression Language)
+        chain = self.prompt | self.llm | self.parser
+        response = chain.invoke({"context": context_text})
+        
+        return response.get("cards", [])
 
-        # Chunk Text
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=200
-        )
-        splits = text_splitter.split_documents(docs)
+# ==========================================
+# 3. Example Execution
+# ==========================================
+if __name__ == "__main__":
+    sample_notes = """
+    Photosynthesis is the process used by plants, algae, and certain bacteria to convert light energy into chemical energy.
+    This chemical energy is stored in carbohydrate molecules, such as sugars, which are synthesized from carbon dioxide and water.
+    
+    The overall equation for photosynthesis is: 6CO2 + 6H2O + Light Energy -> C6H12O6 + 6O2.
+    
+    Photosynthesis occurs in two main stages:
+    1. Light-dependent reactions: Occur in the thylakoid membranes of chloroplasts. They require light energy to split water molecules, producing ATP, NADPH, and releasing oxygen as a byproduct.
+    2. Calvin Cycle (Light-independent reactions): Occurs in the stroma of chloroplasts. It uses ATP and NADPH produced in the light reactions to fix carbon dioxide into glucose.
+    
+    Chlorophyll is the primary pigment involved in photosynthesis, absorbing mainly blue and red wavelengths of light while reflecting green light.
+    """
 
-        # Embed & Index
-        embeddings = OpenAIEmbeddings()
-        vectorstore = FAISS.from_documents(splits, embeddings)
-        return vectorstore
-    finally:
-        # Clean up temp file safely in try...finally block
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+    # Initialize with your key (or set GOOGLE_API_KEY in environment)
+    generator = GoogleRAGFlashcardGenerator()
 
+    # Step 1: Process and store notes in FAISS using Google Embeddings
+    generator.ingest_notes(sample_notes)
 
-def generate_flashcards(vectorstore, topic, num_cards):
-    """Retrieves context via RAG and uses LLM to generate structured flashcards."""
-    # Retrieve top relevant context chunks
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-    retrieved_docs = retriever.invoke(
-        topic if topic else "key concepts core summary"
-    )
-    context_text = "\n\n".join([doc.page_content for doc in retrieved_docs])
+    # Step 2: Retrieve context & generate flashcards using Gemini
+    cards = generator.generate_flashcards(
+        query="Explain the stages of photosynthesis and key pigments",
+        k=3
+    )
 
-    # Setup LLM & Parser
-    parser = JsonOutputParser(pydantic_object=FlashcardList)
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
-
-    prompt_template = """
-    You are an expert study assistant. Use the following context retrieved from the user's notes to create {num_cards} high-quality flashcards.
-    Focus on key definitions, core concepts, formulas, and critical distinctions.
-
-    CONTEXT:
-    {context}
-
-    TOPIC / INSTRUCTION:
-    {topic}
-
-    FORMAT INSTRUCTIONS:
-    {format_instructions}
-    """
-
-    prompt = PromptTemplate(
-        template=prompt_template,
-        input_variables=["context", "topic", "num_cards"],
-        partial_variables={
-            "format_instructions": parser.get_format_instructions()
-        },
-    )
-
-    chain = prompt | llm | parser
-
-    response = chain.invoke({
-        "context": context_text,
-        "topic": topic if topic else "General summary of important concepts",
-        "num_cards": num_cards,
-    })
-
-    return response.get("cards", [])
-
-
-# --- Main App Interface ---
-uploaded_file = st.file_uploader("Upload Study Notes (PDF)", type=["pdf"])
-
-if uploaded_file:
-    with st.spinner(
-        "Processing PDF, building embeddings, and indexing vector database..."
-    ):
-        try:
-            vectorstore = process_pdf(uploaded_file)
-            st.success("PDF processed successfully!")
-        except Exception as e:
-            st.error(f"Error processing PDF: {str(e)}")
-            st.stop()
-
-    st.markdown("---")
-
-    # Input Controls
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        topic_query = st.text_input(
-            "Focus Topic (optional)",
-            placeholder="e.g., Photosynthesis, Neural Networks, Chapter 3",
-        )
-    with col2:
-        num_cards = st.slider(
-            "Number of Flashcards", min_value=3, max_value=15, value=5
-        )
-
-    if st.button("✨ Generate Flashcards"):
-        with st.spinner("Retrieving notes and synthesizing flashcards..."):
-            try:
-                flashcards = generate_flashcards(
-                    vectorstore, topic_query, num_cards
-                )
-                st.session_state["flashcards"] = flashcards
-                st.session_state["card_index"] = 0
-                st.session_state["show_answer"] = False
-            except Exception as e:
-                st.error(f"Generation failed: {str(e)}")
-
-# --- Interactive Flashcard Viewer ---
-if "flashcards" in st.session_state and st.session_state["flashcards"]:
-    cards = st.session_state["flashcards"]
-    idx = st.session_state.get("card_index", 0)
-
-    st.markdown("---")
-    st.subheader(f"🎴 Card {idx + 1} of {len(cards)}")
-
-    current_card = cards[idx]
-
-    # Flashcard Container Box
-    card_container = st.container(border=True)
-    with card_container:
-        if not st.session_state.get("show_answer", False):
-            st.markdown("### **Question / Concept:**")
-            st.markdown(f"#### {current_card['question']}")
-        else:
-            st.markdown("### **Answer / Explanation:**")
-            st.info(current_card["answer"])
-
-    # Controls
-    c1, c2, c3 = st.columns([1, 1, 1])
-    with c1:
-        if st.button("⬅️ Previous") and idx > 0:
-            st.session_state["card_index"] -= 1
-            st.session_state["show_answer"] = False
-            st.rerun()
-
-    with c2:
-        if st.button("🔄 Flip Card"):
-            st.session_state["show_answer"] = not st.session_state.get(
-                "show_answer", False
-            )
-            st.rerun()
-
-    with c3:
-        if st.button("Next ➡️") and idx < len(cards) - 1:
-            st.session_state["card_index"] += 1
-            st.session_state["show_answer"] = False
-            st.rerun()
-
-    # JSON Export Option
-    st.markdown("---")
-    st.download_button(
-        label="📥 Export Flashcards as JSON",
-        data=json.dumps(cards, indent=2),
-        file_name="flashcards.json",
-        mime="application/json",
-    )
+    # Step 3: Print Results
+    print("\n--- Generated Flashcards ---\n")
+    for idx, card in enumerate(cards, 1):
+        print(f"Card {idx}:")
+        print(f"  Front: {card['front']}")
+        print(f"  Back : {card['back']}\n")
