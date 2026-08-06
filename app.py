@@ -25,12 +25,12 @@ st.write("Upload your lecture notes/PDFs and extract AI-powered flashcards via R
 # --- Sidebar: Setup & API Keys ---
 with st.sidebar:
     st.header("🔑 Configuration")
-    openai_api_key = st.text_input("Enter OpenAI API Key", type="password")
-    if not openai_api_key:
-        st.info("Please provide an OpenAI API key to proceed.")
+    GOOGLE_API_KEY = st.text_input("ENTER GOOGLE API KEY", type="password")
+    if not GOOGLE API KEY:
+        st.info("Please provide a GOOGLE API KEY to proceed.")
         st.stop()
     
-    os.environ["OPENAI_API_KEY"] = openai_api_key
+    os.environ["GOOGLE API KEY"] = GOOGLE_API_KEY
 
 # --- Pydantic Schema for Structured Output ---
 class Flashcard(BaseModel):
