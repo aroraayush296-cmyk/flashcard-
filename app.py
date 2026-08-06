@@ -26,7 +26,7 @@ st.write("Upload your lecture notes/PDFs and extract AI-powered flashcards via R
 with st.sidebar:
     st.header("🔑 Configuration")
     GOOGLE_API_KEY = st.text_input("ENTER GOOGLE API KEY", type="password")
-    if not GOOGLE API KEY:
+    if not GOOGLE_API_KEY:
         st.info("Please provide a GOOGLE API KEY to proceed.")
         st.stop()
     
