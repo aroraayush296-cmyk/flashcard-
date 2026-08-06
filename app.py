@@ -1,8 +1,7 @@
 import os
 from typing import List
 from pydantic import BaseModel, Field
-
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
