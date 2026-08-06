@@ -1,13 +1,8 @@
-# Core LangChain Framework
 langchain>=0.2.0
-langchain-community>=0.2.0
-langchain-core>=0.2.0
-
-# Google Gemini & Generative AI Integration
-langchain-google-genai>=1.0.0
-
-# Vector Database
-faiss-cpu>=1.8.0
-
-# Data Validation & Schema Definition
-pydantic>=2.0.0
+langchain-text-splitters
+langchain-community
+langchain-core
+langchain-google-genai
+faiss-cpu
+pydantic
+streamlit
